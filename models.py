@@ -1,5 +1,5 @@
 from app import db
-from datetime import datetime
+from datetime import datetime, timezone
 
 class Doctor(db.Model):
     __tablename__ = 'doctors'
@@ -31,7 +31,7 @@ class Appointment(db.Model):
     end_time = db.Column(db.DateTime, nullable=False)
     reason = db.Column(db.String(200))
     status = db.Column(db.String(20), default='scheduled')
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     def to_dict(self):
         return {
