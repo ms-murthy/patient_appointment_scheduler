@@ -143,9 +143,9 @@ def reschedule_appointment(appt_id):
     """Move an existing appointment to a new time slot.
 
     Only ``start_time`` and ``end_time`` change; the doctor, patient, reason
-    and status are left as they are (a cancelled appointment stays cancelled).
-    The appointment is excluded from the overlap check, so it may overlap its
-    own old slot.
+    and status are left as they are. A cancelled appointment cannot be
+    rescheduled; book a new one instead. The appointment is excluded from the
+    overlap check, so it may overlap its own old slot.
 
     Args:
         appt_id (int): Appointment ID, taken from the URL path.
@@ -158,8 +158,8 @@ def reschedule_appointment(appt_id):
         appointment in ``data``. HTTP 400 for a missing, malformed or
         non-object body, missing or invalid datetimes (including non-string
         values) or ``end_time <= start_time``. HTTP 404 if the ID is unknown.
-        HTTP 409 if
-        the new slot conflicts with another appointment for the same doctor.
+        HTTP 409 if the appointment is already cancelled, or if the new slot
+        conflicts with another appointment for the same doctor.
 
     Example:
         ``PUT /appointments/2`` with body ``{"start_time": "2025-07-02T14:00:00",
@@ -183,6 +183,8 @@ def reschedule_appointment(appt_id):
         return jsonify({'data': None, 'error': 'Invalid or missing datetime fields', 'status': 400}), 400
     if new_end <= new_start:
         return jsonify({'data': None, 'error': 'end_time must be after start_time', 'status': 400}), 400
+    if appt.status == 'cancelled':
+        return jsonify({'data': None, 'error': 'Cancelled appointments cannot be rescheduled', 'status': 409}), 409
     if check_overlap(appt.doctor_id, new_start, new_end, exclude_id=appt_id):
         return jsonify({'data': None, 'error': 'New time slot conflicts with existing appointment', 'status': 409}), 409
     appt.start_time = new_start

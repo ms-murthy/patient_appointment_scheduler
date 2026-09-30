@@ -117,6 +117,28 @@ def test_post_unknown_id_beats_conflict(client):
     assert client.post('/appointments', json=body).status_code == 404
 
 
+def test_put_cancelled_appointment_is_409_and_unchanged(client):
+    """PUT on a cancelled appointment returns 409 and leaves its times and status alone."""
+    client.delete('/appointments/1')
+    response = client.put('/appointments/1', json={'start_time': '2025-07-01T11:00:00',
+                                                   'end_time': '2025-07-01T11:30:00'})
+    body = response.get_json()
+    assert response.status_code == 409
+    assert body['data'] is None and body['status'] == 409
+    assert body['error'] == 'Cancelled appointments cannot be rescheduled'
+    appt = db.session.get(Appointment, 1)
+    assert appt.status == 'cancelled'
+    assert appt.start_time == datetime(2025, 7, 1, 9)
+
+
+def test_put_cancelled_bad_input_is_still_400(client):
+    """A bad time range on a cancelled appointment is 400, since bad input beats a conflict."""
+    client.delete('/appointments/1')
+    response = client.put('/appointments/1', json={'start_time': '2025-07-01T11:30:00',
+                                                   'end_time': '2025-07-01T11:00:00'})
+    assert_envelope_400(response)
+
+
 def test_valid_requests_still_succeed(client):
     """A valid POST (back-to-back slot) is 201 and a valid PUT is 200."""
     assert client.post('/appointments', json=VALID).status_code == 201
