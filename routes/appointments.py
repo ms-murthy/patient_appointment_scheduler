@@ -87,8 +87,9 @@ def create_appointment():
 
     Returns:
         tuple[flask.Response, int]: HTTP 201 with the new appointment in
-        ``data``. HTTP 400 for a missing body, missing field, invalid datetime
-        or ``end_time <= start_time``. HTTP 409 if the slot conflicts with an
+        ``data``. HTTP 400 for a missing, malformed or non-object body, a
+        missing field, a datetime that is not an ISO 8601 string, or
+        ``end_time <= start_time``. HTTP 409 if the slot conflicts with an
         existing appointment.
 
     Example:
@@ -101,8 +102,8 @@ def create_appointment():
                       "start_time": "2025-07-01T09:30:00", "status": "scheduled"},
              "error": null, "status": 201}
     """
-    data = request.get_json()
-    if not data:
+    data = request.get_json(silent=True)
+    if not data or not isinstance(data, dict):
         return jsonify({'data': None, 'error': 'No data provided', 'status': 400}), 400
     required = ['patient_id', 'doctor_id', 'start_time', 'end_time']
     for field in required:
@@ -111,7 +112,7 @@ def create_appointment():
     try:
         start = datetime.fromisoformat(data['start_time'])
         end = datetime.fromisoformat(data['end_time'])
-    except ValueError:
+    except (ValueError, TypeError):
         return jsonify({'data': None, 'error': 'Invalid datetime format. Use ISO 8601.', 'status': 400}), 400
     if end <= start:
         return jsonify({'data': None, 'error': 'end_time must be after start_time', 'status': 400}), 400
@@ -146,8 +147,10 @@ def reschedule_appointment(appt_id):
 
     Returns:
         flask.Response or tuple[flask.Response, int]: HTTP 200 with the updated
-        appointment in ``data``. HTTP 400 for missing or invalid datetimes or
-        ``end_time <= start_time``. HTTP 404 if the ID is unknown. HTTP 409 if
+        appointment in ``data``. HTTP 400 for a missing, malformed or
+        non-object body, missing or invalid datetimes (including non-string
+        values) or ``end_time <= start_time``. HTTP 404 if the ID is unknown.
+        HTTP 409 if
         the new slot conflicts with another appointment for the same doctor.
 
     Example:
@@ -162,11 +165,13 @@ def reschedule_appointment(appt_id):
     appt = Appointment.query.get(appt_id)
     if not appt:
         return jsonify({'data': None, 'error': 'Appointment not found', 'status': 404}), 404
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not data or not isinstance(data, dict):
+        return jsonify({'data': None, 'error': 'No data provided', 'status': 400}), 400
     try:
         new_start = datetime.fromisoformat(data['start_time'])
         new_end = datetime.fromisoformat(data['end_time'])
-    except (ValueError, KeyError):
+    except (ValueError, KeyError, TypeError):
         return jsonify({'data': None, 'error': 'Invalid or missing datetime fields', 'status': 400}), 400
     if new_end <= new_start:
         return jsonify({'data': None, 'error': 'end_time must be after start_time', 'status': 400}), 400
