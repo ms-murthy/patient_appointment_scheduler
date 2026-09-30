@@ -39,6 +39,8 @@ doctors and departments. Internal tool — not patient-facing.
 - Models: singular PascalCase classes with a lowercase plural `__tablename__` (Doctor -> 'doctors').
 - Columns: snake_case. Foreign keys are `<model>_id` (patient_id, doctor_id), datetimes that mark a slot are `<what>_time` (start_time, end_time), and audit timestamps end in `_at` (created_at).
 - Status values are lowercase strings ('scheduled', 'cancelled'). check_overlap() matches 'scheduled' exactly, so a differently-cased or new status would not block a slot.
+- Tests: files are `tests/test_<topic>.py`, functions are `test_<behaviour>` (e.g. `test_post_unknown_id_is_404_and_creates_nothing`), and the shared fixtures are named `app` and `client`. Module-level test constants are UPPER_SNAKE_CASE (`VALID`).
+- Local variable names follow the resource: `appt` / `appt_id` for an Appointment, `doctor`, `patient`, `data` for the parsed JSON body, `start` / `end` (create) and `new_start` / `new_end` (reschedule) for parsed datetimes. Do not shadow `db`, `app` or `data` with something else.
 
 ## Best Practices
 
@@ -49,6 +51,10 @@ doctors and departments. Internal tool — not patient-facing.
 - Prefer state changes over deleting rows (cancelling sets status='cancelled'), and commit once per request, only after every check has passed.
 - Confirm that referenced records exist (e.g. patient_id, doctor_id) and return 404 if not, because SQLite will not enforce the foreign keys.
 - Add pytest tests under tests/ for new logic (pytest and pytest-cov are already in requirements.txt), including boundary cases such as back-to-back and zero-length slots. Run them against an in-memory database, not db/appointments.db.
+- Formatting: 4-space indentation (no tabs), single-quoted strings (double quotes only for docstrings and to avoid escaping), and no trailing whitespace. There is no enforced line limit, but wrap docstrings at about 80 columns and break a long `jsonify({...})` or dict literal across lines with a 4-space hanging indent only when it does not fit on one line.
+- Blank lines: existing modules (`models.py`, `routes/`, `utils/`) use ONE blank line between top-level definitions, while `tests/` files use two (PEP 8). Match the file you are editing rather than reformatting it, and keep each edit's diff limited to the lines you meant to change.
+- Keep the envelope keys in the order `data`, `error`, `status`, use `isoformat()` for datetimes, and end every file with a newline. Line endings are handled by git (`core.autocrlf=true`: LF in the repo, CRLF in the Windows working copy), so the "LF will be replaced by CRLF" warnings are harmless; do not convert files by hand. Put new imports with the existing ones at the top of the file; do not import inside a function except for the circular-import case in `create_app()`.
+- Prefer `db.session.get(Model, id)` over the legacy `Model.query.get(id)` in new code, and catch the narrowest exceptions that can actually occur (for example `(ValueError, TypeError)` around `datetime.fromisoformat()`), never a bare `except:`.
 
 ## Do Not Touch
 
@@ -56,6 +62,7 @@ doctors and departments. Internal tool — not patient-facing.
 - Do not write raw SQL queries — use SQLAlchemy ORM
 - Do not change the JSON response shape (data / error / status)
 - Do not run db/seed_data.py without asking first — it calls db.drop_all() and permanently deletes every row in db/appointments.db (gitignored, so there is no backup)
+- Do not change the strict `<` / `>` comparisons in `check_overlap()` (utils/conflict.py), its `ValueError` guard for `end_time <= start_time`, or the route-level `end_time > start_time` 400 checks without updating tests/test_conflict.py and asking first. Changing either side silently allows or rejects real bookings, and the result can depend on booking order.
 
 ## Useful Context
 
@@ -64,7 +71,8 @@ doctors and departments. Internal tool — not patient-facing.
 - All datetime values use ISO 8601 format
 - check_overlap() uses strict `<` / `>` on purpose so back-to-back slots (09:00–09:30, 09:30–10:00) are allowed; changing to `<=` / `>=` rejects them, and changing only one makes results depend on booking order. tests/test_conflict.py guards this (back-to-back, containment, 1-microsecond overlap).
 - Cancellation is a soft delete: DELETE /appointments/<id> sets status='cancelled'. check_overlap() only counts status='scheduled', so cancelled slots can be rebooked. GET /appointments does not filter by status and still returns cancelled rows.
-- /doctors/<id>/slots returns a doctor's BOOKED appointments, not free slots.
+- /doctors/<id>/slots returns a doctor's BOOKED appointments, not free slots. It takes an optional `?date=YYYY-MM-DD` filter (bad format -> 400, unknown doctor -> 404), compares via `db.func.date(Appointment.start_time)`, and, unlike GET /appointments, excludes cancelled rows. Its response `data` is `{'doctor': {...}, 'booked_slots': [...]}`, not a bare list.
+- Layering is deliberately thin: route handlers query the models and call `db.session` directly, and `utils/` currently holds only `check_overlap()` (used by POST and PUT). Put new reusable business rules in `utils/` with their own tests; keep handlers to validate -> check -> write -> respond.
 - db/seed_data.py runs db.drop_all() before recreating tables, so it wipes ALL data in db/appointments.db (gitignored, so unrecoverable). It creates 5 doctors, 10 patients and 20 non-overlapping appointments dated 1–5 July 2025 (in the past). Run it from the project root.
 - db.create_all() runs on every app start (app.py) but never alters existing tables, which is why schema changes need a re-seed.
 - Importing app runs create_app() at module level (app = create_app()), which touches the DB as a side effect. models.py does `from app import db`, and blueprints are imported inside create_app() to avoid a circular import; keep that pattern.
