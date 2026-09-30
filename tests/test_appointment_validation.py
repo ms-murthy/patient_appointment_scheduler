@@ -5,7 +5,7 @@ import pytest
 from flask import Flask
 
 from app import db
-from models import Appointment
+from models import Appointment, Doctor, Patient
 from routes.appointments import appointments_bp
 
 VALID = {'patient_id': 1, 'doctor_id': 1,
@@ -16,7 +16,7 @@ VALID = {'patient_id': 1, 'doctor_id': 1,
 def client():
     """Yield a test client on a throwaway in-memory DB holding appointment 1.
 
-    Appointment 1 is doctor 1, patient 1, 09:00-09:30 on 2025-07-01.
+    Doctor 1, patient 1 and appointment 1 (09:00-09:30 on 2025-07-01) exist.
 
     Returns:
         Iterator[flask.testing.FlaskClient]: Client for the throwaway app.
@@ -30,6 +30,9 @@ def client():
     a.register_blueprint(appointments_bp)
     with a.app_context():
         db.create_all()
+        db.session.add_all([Doctor(name='Dr. Sarah Chen', department='Cardiology'),
+                            Patient(name='Alice Thompson', dob='1985-03-12', nhs_number='NHS-001')])
+        db.session.commit()
         db.session.add(Appointment(patient_id=1, doctor_id=1, status='scheduled',
                                    start_time=datetime(2025, 7, 1, 9), end_time=datetime(2025, 7, 1, 9, 30)))
         db.session.commit()
@@ -82,6 +85,36 @@ def test_put_missing_field_is_400(client):
 def test_put_unknown_id_is_404_before_body_check(client):
     """PUT on an unknown ID is still 404, even with a bad body."""
     assert client.put('/appointments/999', json=None).status_code == 404
+
+
+@pytest.mark.parametrize('field, error', [('patient_id', 'Patient not found'),
+                                          ('doctor_id', 'Doctor not found')])
+def test_post_unknown_id_is_404_and_creates_nothing(client, field, error):
+    """POST with a nonexistent patient or doctor returns 404 and inserts no row."""
+    response = client.post('/appointments', json={**VALID, field: 999})
+    body = response.get_json()
+    assert response.status_code == 404
+    assert body['data'] is None and body['status'] == 404 and body['error'] == error
+    assert Appointment.query.count() == 1
+
+
+@pytest.mark.parametrize('bad', ['1', 1.5, None, True, [1]])
+@pytest.mark.parametrize('field', ['patient_id', 'doctor_id'])
+def test_post_non_integer_id_is_400(client, field, bad):
+    """POST with a non-integer patient_id or doctor_id returns 400 (bool is rejected too)."""
+    assert_envelope_400(client.post('/appointments', json={**VALID, field: bad}))
+
+
+def test_post_bad_input_beats_unknown_id(client):
+    """A bad time range is reported as 400 even when the IDs are also unknown."""
+    body = {**VALID, 'patient_id': 999, 'doctor_id': 999, 'end_time': VALID['start_time']}
+    assert_envelope_400(client.post('/appointments', json=body))
+
+
+def test_post_unknown_id_beats_conflict(client):
+    """An unknown doctor is 404, not a 409 or a silent success, for an otherwise free slot."""
+    body = {**VALID, 'doctor_id': 999, 'start_time': '2025-07-01T09:00:00', 'end_time': '2025-07-01T09:30:00'}
+    assert client.post('/appointments', json=body).status_code == 404
 
 
 def test_valid_requests_still_succeed(client):

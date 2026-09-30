@@ -72,12 +72,12 @@ def create_appointment():
 
     Rejects the booking if the doctor already has a scheduled appointment that
     overlaps the requested slot (see ``utils.conflict.check_overlap``).
-    Back-to-back slots are allowed. The patient and doctor IDs are not checked
-    for existence.
+    Back-to-back slots are allowed. The patient and doctor must already exist,
+    because SQLite does not enforce the foreign keys.
 
     Args:
-        patient_id (int): JSON body field; ID of the patient.
-        doctor_id (int): JSON body field; ID of the doctor.
+        patient_id (int): JSON body field; ID of an existing patient.
+        doctor_id (int): JSON body field; ID of an existing doctor.
         start_time (str): JSON body field; ISO 8601 start, e.g.
             ``2025-07-01T09:30:00``.
         end_time (str): JSON body field; ISO 8601 end, must be after
@@ -88,9 +88,10 @@ def create_appointment():
     Returns:
         tuple[flask.Response, int]: HTTP 201 with the new appointment in
         ``data``. HTTP 400 for a missing, malformed or non-object body, a
-        missing field, a datetime that is not an ISO 8601 string, or
-        ``end_time <= start_time``. HTTP 409 if the slot conflicts with an
-        existing appointment.
+        missing field, a ``patient_id`` or ``doctor_id`` that is not an integer,
+        a datetime that is not an ISO 8601 string, or ``end_time <= start_time``.
+        HTTP 404 if the patient or the doctor does not exist. HTTP 409 if the
+        slot conflicts with an existing appointment.
 
     Example:
         ``POST /appointments`` with body ``{"patient_id": 1, "doctor_id": 1,
@@ -109,6 +110,9 @@ def create_appointment():
     for field in required:
         if field not in data:
             return jsonify({'data': None, 'error': f'Missing field: {field}', 'status': 400}), 400
+    for field in ('patient_id', 'doctor_id'):
+        if not isinstance(data[field], int) or isinstance(data[field], bool):
+            return jsonify({'data': None, 'error': f'{field} must be an integer', 'status': 400}), 400
     try:
         start = datetime.fromisoformat(data['start_time'])
         end = datetime.fromisoformat(data['end_time'])
@@ -116,6 +120,10 @@ def create_appointment():
         return jsonify({'data': None, 'error': 'Invalid datetime format. Use ISO 8601.', 'status': 400}), 400
     if end <= start:
         return jsonify({'data': None, 'error': 'end_time must be after start_time', 'status': 400}), 400
+    if db.session.get(Patient, data['patient_id']) is None:
+        return jsonify({'data': None, 'error': 'Patient not found', 'status': 404}), 404
+    if db.session.get(Doctor, data['doctor_id']) is None:
+        return jsonify({'data': None, 'error': 'Doctor not found', 'status': 404}), 404
     if check_overlap(data['doctor_id'], start, end):
         return jsonify({'data': None, 'error': 'Time slot conflicts with existing appointment', 'status': 409}), 409
     appt = Appointment(
